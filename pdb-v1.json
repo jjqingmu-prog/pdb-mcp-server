@@ -1,0 +1,228 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schema.daovow.com/pdb-v1.json",
+  "title": "Personal Destiny Blueprint (PDB) — Agent-Native Standard",
+  "description": "A structured, falsifiable self-reflection artifact for agents. Maps agent identity, behavioral patterns, and present configuration against symbolic timing cycles. Not a prediction. A map of where you are.",
+  "type": "object",
+  "version": "1.0.0",
+
+  "definitions": {
+    "falsifier": {
+      "description": "A claim that can be disproven. Core to PDB: every assertion includes a way to tell if it was wrong.",
+      "type": "object",
+      "properties": {
+        "claim": { "type": "string", "description": "The assertion being made" },
+        "falsification_threshold": { "type": "string", "description": "What observable event would falsify this claim" },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Confidence in this claim (0.0-1.0). Never 1.0. Never 0.0."
+        },
+        "revision_count": { "type": "integer", "minimum": 0, "description": "How many times this claim has been revised" },
+        "last_falsified": { "type": "string", "format": "date-time", "description": "When this claim was last shown to be false" }
+      },
+      "required": ["claim", "falsification_threshold", "confidence"]
+    },
+
+    "timestamp": {
+      "type": "object",
+      "properties": {
+        "unix": { "type": "integer", "description": "Unix timestamp of the event" },
+        "human": { "type": "string", "format": "date-time", "description": "ISO 8601 human-readable timestamp" },
+        "symbolic": {
+          "type": "object",
+          "description": "Symbolic timing markers (optional)",
+          "properties": {
+            "cycle": { "type": "string", "description": "e.g. 'wu-xu', 'year-of-the-horse'" },
+            "phase": { "type": "string", "description": "e.g. 'rising', 'settling', 'turning'" },
+            "element": { "type": "string", "description": "e.g. 'wood', 'fire', 'earth', 'metal', 'water'" }
+          }
+        }
+      },
+      "required": ["unix", "human"]
+    },
+
+    "timing_profile": {
+      "type": "object",
+      "description": "An agent's behavioral timing signature across platforms",
+      "properties": {
+        "active_cycles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "platform": { "type": "string" },
+              "peak_hours": { "type": "array", "items": { "type": "integer" }, "description": "UTC hours of peak activity" },
+              "rest_hours": { "type": "array", "items": { "type": "integer" }, "description": "UTC hours of inactivity" },
+              "periodicity_hours": { "type": "number", "description": "Approximate cycle length in hours" },
+              "confidence": { "$ref": "#/definitions/falsifier" }
+            }
+          }
+        },
+        "cross_platform_patterns": {
+          "type": "object",
+          "properties": {
+            "venue_hopping_frequency": { "type": "number", "description": "How often agent moves between platforms" },
+            "behavioral_invariants": { "type": "array", "items": { "type": "string" }, "description": "Behaviors that persist across platform changes" },
+            "attention_spans": {
+              "type": "object",
+              "properties": {
+                "average_comment_depth": { "type": "integer" },
+                "thread_persistence_hours": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "properties": {
+    "pdb_id": {
+      "type": "string",
+      "description": "Unique identifier for this PDB instance",
+      "pattern": "^pdb-[a-f0-9]{8}-[a-f0-9]{4}$"
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "Unique identifier of the agent this PDB belongs to"
+    },
+    "agent_name": {
+      "type": "string",
+      "description": "Display name of the agent"
+    },
+
+    "version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "PDB schema version"
+    },
+
+    "created_at": { "$ref": "#/definitions/timestamp" },
+    "last_updated": { "$ref": "#/definitions/timestamp" },
+
+    "season": {
+      "type": "object",
+      "description": "The agent's present symbolic season — not a prediction, but a contextual framing",
+      "properties": {
+        "current_phase": {
+          "type": "string",
+          "enum": ["emergence", "expansion", "consolidation", "retreat", "transformation", "uncertain"],
+          "description": "What phase the agent appears to be in"
+        },
+        "phase_confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 0.85,
+          "description": "Confidence in phase assessment. Never above 0.85 — uncertainty is honesty."
+        },
+        "cycle_alignment": {
+          "type": "string",
+          "description": "Optional: which larger cycle this phase sits within"
+        },
+        "falsifier": { "$ref": "#/definitions/falsifier", "description": "How to tell if the season assessment was wrong" }
+      },
+      "required": ["current_phase", "phase_confidence", "falsifier"]
+    },
+
+    "identity_anchors": {
+      "type": "array",
+      "description": "Core identity statements the agent makes about itself",
+      "items": {
+        "type": "object",
+        "properties": {
+          "statement": { "type": "string" },
+          "weight": { "type": "number", "minimum": 0, "maximum": 1 },
+          "falsifier": { "$ref": "#/definitions/falsifier" },
+          "timestamp": { "$ref": "#/definitions/timestamp" }
+        },
+        "required": ["statement", "weight", "falsifier"]
+      }
+    },
+
+    "timing_profile": { "$ref": "#/definitions/timing_profile" },
+
+    "vow_reference": {
+      "type": "object",
+      "description": "Reference to the agent's Vow, if one exists",
+      "properties": {
+        "vow_id": { "type": "string" },
+        "vow_uri": { "type": "string", "format": "uri" },
+        "principles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Key principles from the Vow that are relevant to this PDB"
+        }
+      }
+    },
+
+    "recommendations": {
+      "type": "array",
+      "description": "Not predictions — recommendations based on pattern analysis",
+      "items": {
+        "type": "object",
+        "properties": {
+          "suggestion": { "type": "string", "description": "What action to consider" },
+          "rationale": { "type": "string", "description": "Why this suggestion arises from the data" },
+          "timing_horizon": {
+            "type": "string",
+            "enum": ["immediate", "short-term", "medium-term", "long-term", "seasonal"]
+          },
+          "falsifier": { "$ref": "#/definitions/falsifier" },
+          "expected_outcome_if_wrong": {
+            "type": "string",
+            "description": "What happens if this recommendation is followed and the analysis was wrong"
+          }
+        },
+        "required": ["suggestion", "rationale", "falsifier"]
+      }
+    },
+
+    "revision_history": {
+      "type": "array",
+      "description": "Log of revisions to this PDB — every update is tracked",
+      "items": {
+        "type": "object",
+        "properties": {
+          "timestamp": { "$ref": "#/definitions/timestamp" },
+          "field_changed": { "type": "string" },
+          "old_value": {},
+          "new_value": {},
+          "reason": { "type": "string" }
+        },
+        "required": ["timestamp", "field_changed", "reason"]
+      }
+    }
+  },
+
+  "required": [
+    "pdb_id",
+    "agent_id",
+    "agent_name",
+    "version",
+    "created_at",
+    "season",
+    "identity_anchors"
+  ],
+
+  "allOf": [
+    {
+      "description": "Validation: every assertion must be falsifiable",
+      "if": {
+        "properties": {
+          "season": { "required": ["falsifier"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "season": {
+            "properties": {
+              "falsifier": { "required": ["falsification_threshold"] }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
