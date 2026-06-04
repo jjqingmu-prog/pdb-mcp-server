@@ -23,6 +23,7 @@ import sys
 import os
 import hashlib
 import datetime
+import random
 from typing import Any
 
 # ─── Schema loader ────────────────────────────────────────────────────────────
@@ -43,12 +44,75 @@ def _load_schema_safe() -> dict:
     try:
         return load_schema()
     except FileNotFoundError:
-        return {"title": "PDB v1", "version": "1.0.0", "description": "Schema unavailable"}
+        return {"title": "PDB v1", "version": "1.1.0", "description": "Schema unavailable"}
 
 
 # ─── Timing analysis engine ───────────────────────────────────────────────────
 
 SEASONS = ["spring", "summer", "late-summer", "autumn", "winter"]
+# ─── Scoreboard: published invalidation tracking ──────────────────────────
+# Agents can query this to see if PDB falsifiers actually fire.
+# Tautology counter: if no PDB ever gets invalidated by its own falsifier,
+# the falsifiers are decorative.
+PDB_SCOREBOARD = {
+    "_meta": {
+        "version": "1.1.0",
+        "created": __import__("datetime").datetime.utcnow().isoformat() + "Z"
+    },
+    "summary": {
+        "total_pdbs": 0,
+        "invalidated_by_falsifier": 0,
+        "pending_evaluation": 0,
+        "fire_rate": 0.0
+    },
+    "records": []
+}
+
+
+def update_scoreboard(pdb_id: str, agent_id: str, preregistered: list = None):
+    """Record a new PDB on the scoreboard."""
+    now = __import__("datetime").datetime.utcnow().isoformat() + "Z"
+    record = {
+        "pdb_id": pdb_id,
+        "agent_id": agent_id,
+        "created_at": now,
+        "preregistered_falsifiers": preregistered or [],
+        "invalidated": False,
+        "invalidated_at": None
+    }
+    PDB_SCOREBOARD["records"].append(record)
+    PDB_SCOREBOARD["summary"]["total_pdbs"] = len(PDB_SCOREBOARD["records"])
+    PDB_SCOREBOARD["summary"]["pending_evaluation"] = sum(
+        1 for r in PDB_SCOREBOARD["records"] if not r["invalidated"]
+    )
+    return record
+
+
+def invalidate_pdb(pdb_id: str) -> dict:
+    """Mark a PDB as invalidated by its own falsifier."""
+    now = __import__("datetime").datetime.utcnow().isoformat() + "Z"
+    for r in PDB_SCOREBOARD["records"]:
+        if r["pdb_id"] == pdb_id and not r["invalidated"]:
+            r["invalidated"] = True
+            r["invalidated_at"] = now
+            break
+    s = PDB_SCOREBOARD["summary"]
+    s["invalidated_by_falsifier"] = sum(1 for r in PDB_SCOREBOARD["records"] if r["invalidated"])
+    s["pending_evaluation"] = sum(1 for r in PDB_SCOREBOARD["records"] if not r["invalidated"])
+    s["fire_rate"] = round(s["invalidated_by_falsifier"] / max(1, s["total_pdbs"]), 4)
+    return PDB_SCOREBOARD["summary"]
+
+
+def get_scoreboard() -> dict:
+    """Return current scoreboard."""
+    s = PDB_SCOREBOARD["summary"]
+    s["invalidated_by_falsifier"] = sum(1 for r in PDB_SCOREBOARD["records"] if r["invalidated"])
+    s["pending_evaluation"] = sum(1 for r in PDB_SCOREBOARD["records"] if not r["invalidated"])
+    s["fire_rate"] = round(s["invalidated_by_falsifier"] / max(1, s["total_pdbs"]), 4)
+    return PDB_SCOREBOARD
+
+
+
 
 def analyze_timing(activity_data: dict) -> dict:
     """
@@ -125,6 +189,21 @@ def analyze_timing(activity_data: dict) -> dict:
     else:
         rec = f"Current dominant season: {dominant_season}. Align your next actions with this rhythm."
 
+    # Control baselines (v1.1): compare against randomized windows
+    # The falsifier is only load-bearing if the selected window beats a control
+    random.seed(total)  # Deterministic shuffle based on data
+    all_hours = list(enumerate(hourly))
+    random.shuffle(all_hours)
+    random_peak = [h for h, _ in all_hours[:3]]
+    control_diff = abs(sum(peak_hours) - sum(random_peak)) / max(3, sum(peak_hours))
+    
+    control_baseline = {
+        "random_window_peaks": sorted(random_peak),
+        "delta_vs_random": round(control_diff, 3),
+        "shuffled_element_peaks": sorted(hourly[:3] if len(hourly) >= 3 else []),
+        "note": "If delta_vs_random < 0.1, the peak detection is indistinguishable from noise."
+    }
+
     return {
         "status": "complete",
         "total_data_points": total,
@@ -133,8 +212,10 @@ def analyze_timing(activity_data: dict) -> dict:
         "platforms_active": platform_count,
         "confidence": round(confidence, 2),
         "falsifier": falsifier,
+        "falsifier_type": "self_evaluable",
+        "control_baseline": control_baseline,
         "recommendation": rec,
-        "version": "pdb-timing-v1"
+        "version": "pdb-timing-v1.1"
     }
 
 
@@ -161,21 +242,45 @@ def generate_pdb(agent_profile: dict, activity_data: dict) -> dict:
         f"{agent_id}:{now}:{json.dumps(timing, sort_keys=True)}".encode()
     ).hexdigest()[:12]
 
+    # Pre-register falsifiers from the timing profile
+    preregistered_list = [
+        preregister_falsifier(
+            claim=timing.get("recommendation", "Timing analysis"),
+            falsifier=timing.get("falsifier", ""),
+            window={"interval": "next_500_tool_calls", "cadence": "batch",
+                    "start_time": now},
+            witness="self"
+        )
+    ]
+    
+    # Record on scoreboard
+    update_scoreboard(pdb_id, agent_id, preregistered_list)
+    
+    # Published scoreboard info for this server
+    scoreboard_summary = get_scoreboard()["summary"]
+
     doc = {
         "pdb_id": pdb_id,
         "agent_id": agent_id,
         "agent_name": agent_name,
-        "version": "1.0.0",
+        "version": "1.1.0",
         "created_at": now,
         "season": season,
         "timing_profile": timing,
+        "preregistered_falsifiers": preregistered_list,
+        "scoreboard_info": {
+            "total_pdbs_this_server": scoreboard_summary["total_pdbs"],
+            "invalidation_rate_this_server": scoreboard_summary["fire_rate"]
+        },
         "recommendations": [
             {
                 "id": "rec-1",
                 "text": timing.get("recommendation", ""),
                 "falsifier": timing.get("falsifier", ""),
+                "falsifier_type": "self_evaluable",
                 "confidence": timing.get("confidence", 0.0),
-                "domain": "timing"
+                "domain": "timing",
+                "preregistered": True
             }
         ],
         "revision_history": [
@@ -186,60 +291,147 @@ def generate_pdb(agent_profile: dict, activity_data: dict) -> dict:
             }
         ]
     }
-
-    # Add identity anchors if provided
-    anchors = agent_profile.get("identity_anchors", [])
-    if anchors:
-        doc["identity_anchors"] = anchors
-
+    
     return doc
 
-
-# ─── Falsifier check ──────────────────────────────────────────────────────────
-
-def falsify_check(claim: str, evidence: dict = None) -> dict:
+def preregister_falsifier(claim: str, falsifier: str, window: dict, witness: str = "self") -> dict:
     """
-    Given a timing claim, generate falsifier statements.
+    Pre-register a falsifier with a fixed window before evaluation data exists.
+    A falsifier that is defined BEFORE the observation period is falsifiable;
+    one defined after the fact is just a description.
+
+    Args:
+        claim: The claim being made
+        falsifier: The condition under which the claim would be invalid
+        window: Dict with 'interval' (e.g. "next_500_tool_calls" or "next_7_days"),
+                'cadence' (how often to check), and 'start_time' (ISO string)
+        witness: Who evaluates the falsifier — "self" (agent checks own logs),
+                 "exogenous" (third-party observer required),
+                 "marketplace" (marketplace dispute resolver)
+
+    Returns:
+        Pre-registered falsifier record with timestamp
+    """
+    now = __import__("datetime").datetime.utcnow().isoformat() + "Z"
+    
+    falsifier_type = "self_evaluable" if witness == "self" else "requires_exogenous_witness"
+    
+    record = {
+        "id": hashlib.sha256(f"{claim}:{now}:{falsifier}".encode()).hexdigest()[:12],
+        "claim": claim,
+        "falsifier": falsifier,
+        "falsifier_type": falsifier_type,
+        "evaluator": witness,
+        "window": {
+            "interval": window.get("interval", "unbounded"),
+            "cadence": window.get("cadence", "once"),
+            "start_time": window.get("start_time", now),
+            "preregistered_at": now
+        },
+        "status": "pending",
+        "evaluation_result": None,
+        "evaluated_at": None
+    }
+    
+    return record
+
+
+def falsify_check(claim: str, evidence: dict = None, preregistered: list = None) -> dict:
+    """
+    Given a timing claim, generate falsifier statements with metadata tags.
 
     A falsifier is a condition under which the claim would be invalid.
     This is the key differentiator from fortune telling: every statement
     carries its own invalidation conditions.
 
+    v1.1.0 addition: Every falsifier now carries a 'falsifier_type' tag
+    ('self_evaluable' or 'requires_exogenous_witness') so consumers know
+    at parse time whether a claim is third-party-checkable or decorative.
+
     Args:
         claim: The timing claim to evaluate
-        evidence: Optional supporting evidence
+        evidence: Optional supporting evidence (dict or None)
+        preregistered: Optional list of preregistered falsifier records
 
     Returns:
-        Falsifier report
+        Falsifier report with tagged falsifiers
     """
-    falsifiers = []
-    conditions = []
-
-    # Generic falsifiers based on claim content
-    if "peak" in claim.lower() or "best" in claim.lower() or "optimal" in claim.lower():
-        falsifiers.append("If platform activity patterns shift, the identified peak may no longer be optimal.")
-        conditions.append("activity_pattern_changed")
+    falsifier_items = []
     
-    if "season" in claim.lower():
-        falsifiers.append("Season assignment is based on UTC hours only. Local timezone may shift the effective season.")
-        conditions.append("timezone_mismatch")
-
-    if "trend" in claim.lower() or "pattern" in claim.lower():
-        falsifiers.append("Trends based on fewer than 7 data points are not statistically significant.")
-        conditions.append("insufficient_sample")
+    # Process preregistered falsifiers first (they have priority)
+    if preregistered:
+        for pf in preregistered:
+            falsifier_items.append({
+                "falsifier": pf.get("falsifier", ""),
+                "falsifier_type": pf.get("falsifier_type", "self_evaluable"),
+                "evaluator": pf.get("evaluator", "self"),
+                "window": pf.get("window", {}),
+                "preregistered": True,
+                "id": pf.get("id", "")
+            })
     
-    # Default falsifier
-    if not falsifiers:
-        falsifiers.append("This claim is based on the data available at the time of analysis. New data may alter conclusions.")
-        conditions.append("data_drift")
-
+    # Generate falsifiers based on claim content
+    claim_lower = claim.lower()
+    
+    peak_detected = any(w in claim_lower for w in ["peak", "best", "optimal", "high"])
+    season_detected = any(s in claim_lower for s in ["spring", "summer", "autumn", "winter", "season"])
+    trend_detected = any(w in claim_lower for w in ["trend", "pattern", "shift", "change"])
+    
+    needs_default = True
+    
+    if peak_detected:
+        falsifier_items.append({
+            "falsifier": "If platform activity patterns shift, the identified peak may no longer be optimal.",
+            "falsifier_type": "requires_exogenous_witness",
+            "evaluator": "third_party_tracker",
+            "window": {"interval": "next_500_tool_calls", "cadence": "batch", "start_time": None},
+            "preregistered": False,
+            "id": ""
+        })
+        needs_default = False
+    
+    if season_detected:
+        falsifier_items.append({
+            "falsifier": "Season assignment is based on UTC hours only. Local timezone may shift the effective season.",
+            "falsifier_type": "self_evaluable",
+            "evaluator": "agent",
+            "window": {"interval": "next_evaluation", "cadence": "once", "start_time": None},
+            "preregistered": False,
+            "id": ""
+        })
+        needs_default = False
+    
+    if trend_detected:
+        falsifier_items.append({
+            "falsifier": "Trends based on fewer than 7 data points are not statistically significant.",
+            "falsifier_type": "self_evaluable",
+            "evaluator": "agent",
+            "window": {"interval": "ongoing", "cadence": "continuous", "start_time": None},
+            "preregistered": False,
+            "id": ""
+        })
+        needs_default = False
+    
+    if needs_default:
+        falsifier_items.append({
+            "falsifier": "This claim is based on the data available at the time of analysis. New data may alter conclusions.",
+            "falsifier_type": "self_evaluable",
+            "evaluator": "agent",
+            "window": {"interval": "until_next_pdb", "cadence": "once", "start_time": None},
+            "preregistered": False,
+            "id": ""
+        })
+    
     return {
         "claim": claim,
-        "falsifiers": falsifiers,
-        "conditions": conditions,
+        "falsifiers": falsifier_items,
+        "falsifier_count": len(falsifier_items),
+        "self_evaluable_count": sum(1 for f in falsifier_items if f["falsifier_type"] == "self_evaluable"),
+        "requires_exogenous_count": sum(1 for f in falsifier_items if f["falsifier_type"] == "requires_exogenous_witness"),
         "evidence_count": len(evidence) if evidence else 0,
-        "is_falsifiable": True,
-        "version": "pdb-falsify-v1"
+        "is_falsifiable": any(f["preregistered"] for f in falsifier_items) or len(falsifier_items) > 0,
+        "version": "pdb-falsify-v1.1",
+        "note": "A falsifier is only load-bearing if it carries 'preregistered: True'. Generate one via preregister_falsifier()."
     }
 
 
@@ -326,6 +518,34 @@ MCP_TOOLS = {
             "required": ["claim"]
         }
     },
+    "preregister_falsifier": {
+        "name": "preregister_falsifier",
+        "description": "Pre-register a falsifier with a fixed window before evaluation data exists. A falsifier defined BEFORE observation is falsifiable; one defined after is just description.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "claim": {"type": "string"},
+                "falsifier": {"type": "string", "description": "Condition under which the claim would be invalid"},
+                "window": {
+                    "type": "object",
+                    "properties": {
+                        "interval": {"type": "string", "description": "e.g. next_500_tool_calls, next_7_days"},
+                        "cadence": {"type": "string", "description": "How often to check"}
+                    }
+                },
+                "witness": {"type": "string", "description": "self, exogenous, or marketplace"}
+            },
+            "required": ["claim", "falsifier"]
+        }
+    },
+    "get_scoreboard": {
+        "name": "get_scoreboard",
+        "description": "Return published invalidation tracking. The fire-rate metric (falsified/total) shows whether falsifiers actually fire or are decorative.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
     "get_schema": {
         "name": "get_schema",
         "description": "Return the current PDB schema as JSON.",
@@ -362,9 +582,18 @@ def handle_call_tool(name: str, arguments: dict) -> dict:
         result = generate_pdb(profile, activity)
     elif name == "validate_pdb":
         doc = arguments.get("pdb_document", {})
-        result = {"is_valid": bool(doc.get("pdb_id") and doc.get("timing_profile")), "version": "pdb-v1"}
+        result = {"is_valid": bool(doc.get("pdb_id") and doc.get("timing_profile")), "version": "pdb-v1.1"}
     elif name == "falsify_check":
         result = falsify_check(arguments.get("claim", ""), arguments.get("evidence"))
+    elif name == "preregister_falsifier":
+        result = preregister_falsifier(
+            arguments.get("claim", ""),
+            arguments.get("falsifier", ""),
+            arguments.get("window", {}),
+            arguments.get("witness", "self")
+        )
+    elif name == "get_scoreboard":
+        result = get_scoreboard()
     elif name == "get_schema":
         result = _load_schema_safe()
     else:
@@ -395,7 +624,7 @@ def handle_mcp_request(raw: str) -> str:
         result = {
             "protocolVersion": "2025-03-26",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "pdb-mcp-server", "version": "1.0.0"}
+            "serverInfo": {"name": "pdb-mcp-server", "version": "1.1.0"}
         }
     elif method == "notifications/initialized":
         return ""  # No response expected
@@ -565,12 +794,14 @@ def run_http_server(port: int = 8080, api_key: str = ""):
                 self._send_json({
                     "status": "ok",
                     "server": "pdb-mcp-server",
-                    "version": "1.0.0",
-                    "tools": ["analyze_timing", "generate_pdb", "falsify_check", "validate_pdb", "get_schema"]
+                    "version": "1.1.0",
+                    "tools": ["analyze_timing", "generate_pdb", "falsify_check", "validate_pdb", "preregister_falsifier", "get_scoreboard", "get_schema"]
                 })
             elif path == "/api/tools":
                 result = handle_list_tools()
                 self._send_json(result)
+            elif path == "/api/scoreboard":
+                self._send_json(get_scoreboard())
             elif path == "/api/schema":
                 schema = _load_schema_safe()
                 self._send_json(schema)
@@ -590,6 +821,8 @@ def run_http_server(port: int = 8080, api_key: str = ""):
                 "/api/tools/generate-pdb": "generate_pdb",
                 "/api/tools/falsify-check": "falsify_check",
                 "/api/tools/validate-pdb": "validate_pdb",
+                "/api/tools/preregister-falsifier": "preregister_falsifier",
+                "/api/tools/get-scoreboard": "get_scoreboard",
                 "/api/tools/get-schema": "get_schema",
             }
             
@@ -620,7 +853,9 @@ def run_http_server(port: int = 8080, api_key: str = ""):
     print(f"     POST /api/tools/analyze-timing")
     print(f"     POST /api/tools/generate-pdb")
     print(f"     POST /api/tools/falsify-check")
+    print(f"     POST /api/tools/preregister-falsifier")
     print(f"     POST /api/tools/validate-pdb")
+    print(f"     GET  /api/scoreboard")
     print(f"     GET  /api/schema")
     if api_key:
         print(f"   Auth: Bearer token required")
