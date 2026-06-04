@@ -518,10 +518,133 @@ def run_tests():
     return passed, failed
 
 
+# ─── HTTP API Server ──────────────────────────────────────────────────────────
+
+def run_http_server(port: int = 8080, api_key: str = ""):
+    """Run as HTTP API server using Python's built-in http.server.
+    
+    Endpoints:
+      GET  /health                      — Health check
+      GET  /api/tools                   — List tools
+      POST /api/tools/analyze-timing    — Timing scan
+      POST /api/tools/generate-pdb      — PDB generation
+      POST /api/tools/falsify-check     — Falsifier generation
+      POST /api/tools/validate-pdb      — PDB validation
+      GET  /api/schema                  — Return PDB schema JSON
+    """
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from urllib.parse import urlparse
+    
+    class PDBHTTPHandler(BaseHTTPRequestHandler):
+        def _auth_check(self):
+            if not api_key:
+                return True
+            auth = self.headers.get("Authorization", "")
+            return auth == f"Bearer {api_key}" or auth == api_key
+        
+        def _send_json(self, data, status=200):
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
+        
+        def _read_body(self) -> dict:
+            length = int(self.headers.get("Content-Length", 0))
+            if length == 0:
+                return {}
+            body = self.rfile.read(length)
+            try:
+                return json.loads(body.decode())
+            except json.JSONDecodeError:
+                return {}
+        
+        def do_GET(self):
+            path = urlparse(self.path).path
+            if path == "/health":
+                self._send_json({
+                    "status": "ok",
+                    "server": "pdb-mcp-server",
+                    "version": "1.0.0",
+                    "tools": ["analyze_timing", "generate_pdb", "falsify_check", "validate_pdb", "get_schema"]
+                })
+            elif path == "/api/tools":
+                result = handle_list_tools()
+                self._send_json(result)
+            elif path == "/api/schema":
+                schema = _load_schema_safe()
+                self._send_json(schema)
+            else:
+                self._send_json({"error": "Not found"}, 404)
+        
+        def do_POST(self):
+            if not self._auth_check():
+                self._send_json({"error": "Unauthorized"}, 401)
+                return
+            
+            path = urlparse(self.path).path
+            body = self._read_body()
+            
+            tool_map = {
+                "/api/tools/analyze-timing": "analyze_timing",
+                "/api/tools/generate-pdb": "generate_pdb",
+                "/api/tools/falsify-check": "falsify_check",
+                "/api/tools/validate-pdb": "validate_pdb",
+                "/api/tools/get-schema": "get_schema",
+            }
+            
+            tool_name = tool_map.get(path)
+            if not tool_name:
+                self._send_json({"error": f"Unknown endpoint: {path}"}, 404)
+                return
+            
+            result = handle_call_tool(tool_name, body.get("arguments", body))
+            self._send_json(result)
+        
+        def do_OPTIONS(self):
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.end_headers()
+        
+        def log_message(self, format, *args):
+            if "--quiet" not in sys.argv:
+                super().log_message(format, *args)
+    
+    server = HTTPServer(("0.0.0.0", port), PDBHTTPHandler)
+    print(f"🌐 PDB MCP Server (HTTP) running on http://0.0.0.0:{port}")
+    print(f"   Endpoints:")
+    print(f"     GET  /health")
+    print(f"     GET  /api/tools")
+    print(f"     POST /api/tools/analyze-timing")
+    print(f"     POST /api/tools/generate-pdb")
+    print(f"     POST /api/tools/falsify-check")
+    print(f"     POST /api/tools/validate-pdb")
+    print(f"     GET  /api/schema")
+    if api_key:
+        print(f"   Auth: Bearer token required")
+    print(f"   Press Ctrl+C to stop")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        server.server_close()
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
         run_tests()
+    elif "--http" in sys.argv:
+        port = 8080
+        api_key = os.environ.get("PDB_API_KEY", "")
+        for i, arg in enumerate(sys.argv):
+            if arg == "--port" and i + 1 < len(sys.argv):
+                port = int(sys.argv[i + 1])
+            if arg == "--api-key" and i + 1 < len(sys.argv):
+                api_key = sys.argv[i + 1]
+        run_http_server(port=port, api_key=api_key)
     else:
         run_stdio_server()
