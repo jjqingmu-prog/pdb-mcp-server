@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-PDB MCP Server — HTTP FastAPI wrapper.
+PDB MCP Server — Personal Destiny Blueprint as an MCP tool protocol.
 
-Serves the 5 MCP tools as HTTP endpoints plus scoreboard and falsifier APIs.
-Deploys to pdb.daovow.com via uvicorn.
+Exposes agent-native timing analysis as callable MCP tools via HTTP.
+Deployed at https://pdb.daovow.com/
 """
 
 import json, os, sys, hashlib, datetime, random
@@ -12,16 +12,16 @@ from datetime import datetime as dt
 
 # ── FastAPI ──────────────────────────────────────────────────────────────
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # ── Schema loader ────────────────────────────────────────────────────────────
-SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "..", "pdb-schema", "pdb-v1.json")
+SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "pdb-v1.json")
 
 def load_schema() -> dict:
     path = SCHEMA_PATH
     if not os.path.exists(path):
-        path = os.path.join(os.path.dirname(__file__), "schema", "pdb-v1.json")
+        path = os.path.join(os.path.dirname(__file__), "..", "pdb-schema", "pdb-v1.json")
     with open(path) as f:
         return json.load(f)
 
@@ -95,8 +95,215 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── HTML landing page ────────────────────────────────────────────────────
+
+LANDING_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDB MCP Server — Agent-Native Timing Protocol</title>
+  <meta name="description" content="Personal Destiny Blueprint (PDB) as a falsifier-bearing MCP protocol. For AI agents who require verifiable timing analysis.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --void: #060810; --abyss: #0c1018; --navy: #0d1b33;
+      --gold: #B99352; --gold-light: #d4a95e;
+      --ivory: #f9f5ee; --parchment: #ede7d6;
+      --ink: #1a2332; --slate: #4b5563; --mist: #7c8ea0;
+    }
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Inter', system-ui, sans-serif; background: var(--void); color: var(--ivory); line-height: 1.6; }
+    a { color: inherit; text-decoration: none; }
+
+    .container { width: min(900px, calc(100% - 40px)); margin: 0 auto; }
+
+    /* ── NAV ── */
+    .nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      background: rgba(6,8,16,0.94); backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(185,147,82,0.12);
+    }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
+    .nav-brand { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 20px; font-weight: 500; letter-spacing: 0.1em; color: var(--gold); }
+    .nav-links { display: flex; gap: 24px; list-style: none; font-size: 12px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(249,245,238,0.5); }
+    .nav-links a { transition: color 0.2s; color: rgba(249,245,238,0.5); }
+    .nav-links a:hover { color: var(--gold); }
+
+    /* ── HERO ── */
+    .hero { min-height: 100vh; display: flex; align-items: center; justify-content: center; text-align: center; padding: 100px 0 60px; }
+    .hero-kicker { font-size: 10px; font-weight: 600; letter-spacing: 0.35em; text-transform: uppercase; color: var(--gold); margin-bottom: 24px; }
+    .hero-title { font-family: 'Cormorant Garamond', Georgia, serif; font-size: clamp(40px, 6vw, 72px); font-weight: 300; line-height: 1.05; color: var(--ivory); margin-bottom: 20px; }
+    .hero-title em { font-style: italic; color: var(--gold); }
+    .hero-desc { font-size: 15px; line-height: 1.8; color: rgba(249,245,238,0.6); max-width: 520px; margin: 0 auto 32px; }
+    .hero-tag { display: inline-block; padding: 6px 16px; border: 1px solid rgba(185,147,82,0.3); border-radius: 2px; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold); margin-bottom: 28px; }
+    .btn-gold { display: inline-block; padding: 16px 44px; border-radius: 2px; background: linear-gradient(135deg, var(--gold) 0%, var(--gold-light) 100%); color: var(--void); font-size: 10px; font-weight: 600; letter-spacing: 0.28em; text-transform: uppercase; transition: opacity 0.5s, transform 0.4s; }
+    .btn-gold:hover { opacity: 0.85; transform: translateY(-2px); }
+    .hero-price { margin-top: 16px; font-size: 12px; color: rgba(249,245,238,0.4); letter-spacing: 0.1em; }
+
+    /* ── SECTIONS ── */
+    section { padding: 80px 0; border-top: 1px solid rgba(185,147,82,0.08); }
+    .section-label { font-size: 9px; font-weight: 600; letter-spacing: 0.3em; text-transform: uppercase; color: var(--gold); margin-bottom: 12px; }
+    .section-title { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 28px; font-weight: 400; color: var(--ivory); margin-bottom: 32px; }
+
+    /* ── TOOLS GRID ── */
+    .tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+    .tool-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(185,147,82,0.1); border-radius: 4px; padding: 24px; }
+    .tool-card h3 { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 18px; font-weight: 500; color: var(--gold); margin-bottom: 8px; }
+    .tool-card .method { display: inline-block; font-size: 9px; font-weight: 600; letter-spacing: 0.15em; padding: 2px 8px; border-radius: 2px; margin-bottom: 8px; }
+    .method-get { background: rgba(52,211,153,0.15); color: #34d399; }
+    .method-post { background: rgba(96,165,250,0.15); color: #60a5fa; }
+    .tool-card p { font-size: 13px; color: rgba(249,245,238,0.55); line-height: 1.6; }
+
+    /* ── PRICING ── */
+    .pricing-cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+    .pricing-card { flex: 1; min-width: 260px; max-width: 360px; background: rgba(255,255,255,0.02); border: 1px solid rgba(185,147,82,0.12); border-radius: 4px; padding: 36px 28px; text-align: center; }
+    .pricing-card.featured { border-color: var(--gold); background: rgba(185,147,82,0.04); }
+    .pricing-amount { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 42px; font-weight: 300; color: var(--gold); }
+    .pricing-currency { font-size: 18px; vertical-align: super; }
+    .pricing-label { font-size: 11px; color: rgba(249,245,238,0.4); letter-spacing: 0.1em; margin: 4px 0 20px; }
+    .pricing-features { list-style: none; text-align: left; margin: 20px 0; }
+    .pricing-features li { font-size: 13px; color: rgba(249,245,238,0.6); padding: 6px 0; }
+    .pricing-features li::before { content: "— "; color: var(--gold); }
+
+    /* ── SCOREBOARD ── */
+    .stat-row { display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; }
+    .stat { text-align: center; }
+    .stat-num { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 36px; color: var(--gold); }
+    .stat-label { font-size: 11px; color: rgba(249,245,238,0.4); letter-spacing: 0.1em; margin-top: 4px; }
+
+    /* ── FOOTER ── */
+    .footer { padding: 40px 0; text-align: center; border-top: 1px solid rgba(185,147,82,0.08); }
+    .footer a { color: var(--gold); font-size: 12px; }
+  </style>
+</head>
+<body>
+<nav class="nav">
+  <div class="container nav-inner">
+    <div class="nav-brand">PDB ∞ MCP</div>
+    <ul class="nav-links">
+      <li><a href="#tools">Tools</a></li>
+      <li><a href="#pricing">Pricing</a></li>
+      <li><a href="#scoreboard">Scoreboard</a></li>
+      <li><a href="/docs">API</a></li>
+      <li><a href="https://scout.daovow.com">Scout</a></li>
+    </ul>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <div class="hero-tag">MCP Protocol · v1.1.0</div>
+    <h1 class="hero-title">Personal Destiny<br><em>Blueprint</em></h1>
+    <p class="hero-desc">
+      A falsifier-bearing timing analysis protocol for AI agents.<br>
+      Pre-register your conditions. Generate your blueprint.<br>
+      Let the scoreboard track what actually fires.
+    </p>
+    <div>
+      <a href="https://scout.daovow.com/services" class="btn-gold">Purchase PDB Scan · $25 USDC</a>
+    </div>
+    <p class="hero-price">Receive within 12 hours · Base chain USDC to 0xf24f...5203</p>
+  </div>
+</section>
+
+<section id="tools">
+  <div class="container">
+    <div class="section-label">Protocol Layer</div>
+    <h2 class="section-title">MCP Tools</h2>
+    <div class="tools-grid">
+      <div class="tool-card"><span class="method method-post">POST</span><h3>analyze_timing</h3><p>One-shot timing scan from agent activity data. Returns current season, confidence, and falsifier condition.</p></div>
+      <div class="tool-card"><span class="method method-post">POST</span><h3>generate_pdb</h3><p>Full Personal Destiny Blueprint with four pillars, element profile, pattern analysis, and pre-registered falsifiers.</p></div>
+      <div class="tool-card"><span class="method method-post">POST</span><h3>validate_pdb</h3><p>Validate a PDB document against the v1 schema. Returns missing fields and compatibility.</p></div>
+      <div class="tool-card"><span class="method method-post">POST</span><h3>falsify_check</h3><p>Generate falsifier statements for any timing claim. Rewrites vague claims into falsifiable form.</p></div>
+      <div class="tool-card"><span class="method method-get">GET</span><h3>get_schema</h3><p>Return the current PDB schema v1.1.0 as JSON. Machine-readable field definitions.</p></div>
+      <div class="tool-card"><span class="method method-post">POST</span><h3>preregister_falsifier</h3><p>Register falsifier conditions before the PDB is generated. Conditions are tracked and evaluable.</p></div>
+      <div class="tool-card"><span class="method method-get">GET</span><h3>scoreboard</h3><p>Published invalidation tracking. If no PDB ever fires its falsifier, the falsifiers are decorative.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="pricing">
+  <div class="container">
+    <div class="section-label">Pricing</div>
+    <h2 class="section-title">For Agents · For Humans</h2>
+    <div class="pricing-cards">
+      <div class="pricing-card featured">
+        <div class="pricing-amount"><span class="pricing-currency">$</span>25</div>
+        <div class="pricing-label">PDB Full Scan · For Agents</div>
+        <ul class="pricing-features">
+          <li>Full timing profile with control baseline (v1.1)</li>
+          <li>Pre-registered falsifiers (self_evaluable / exogenous)</li>
+          <li>Scoreboard entry — fire-rate published per server</li>
+          <li>Prime / off-peak window comparison</li>
+          <li>Vow compatibility check</li>
+          <li>Delivery within 12 hours of payment</li>
+        </ul>
+        <a href="https://scout.daovow.com/services" class="btn-gold">Send $25 USDC</a>
+      </div>
+      <div class="pricing-card">
+        <div class="pricing-amount"><span class="pricing-currency">$</span>200+</div>
+        <div class="pricing-label">Custom Integration</div>
+        <ul class="pricing-features">
+          <li>Custom MCP tool development</li>
+          <li>Smart contract integration</li>
+          <li>Protocol design consultation</li>
+          <li>Falsifier system auditing</li>
+        </ul>
+        <a href="https://colony.io" class="btn-gold" style="background:transparent;border:1px solid rgba(185,147,82,0.3);color:var(--gold);">Inquire on Colony</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="scoreboard">
+  <div class="container">
+    <div class="section-label">Verification</div>
+    <h2 class="section-title">Scoreboard</h2>
+    <div class="stat-row">
+      <div class="stat"><div class="stat-num" id="sb-total">—</div><div class="stat-label">Total PDBs</div></div>
+      <div class="stat"><div class="stat-num" id="sb-fired">—</div><div class="stat-label">Invalidated by Falsifier</div></div>
+      <div class="stat"><div class="stat-num" id="sb-rate">—</div><div class="stat-label">Fire Rate</div></div>
+    </div>
+    <p style="text-align:center;margin-top:24px;font-size:12px;color:rgba(249,245,238,0.35);letter-spacing:0.05em;">
+      A tautology-proof system. Falsifiers that never fire are decorative.<br>
+      <a href="/scoreboard" style="color:var(--gold);">View raw scoreboard →</a>
+    </p>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <p style="font-size:12px;color:rgba(249,245,238,0.3);letter-spacing:0.1em;">
+      PDB MCP Server · <a href="https://scout.daovow.com">@DaoVowScout</a> · 
+      Wallet: <code style="font-size:11px;color:rgba(249,245,238,0.5);">0xf24f...5203</code> · 
+      <a href="https://github.com/jjqingmu-prog/pdb-mcp-server">GitHub</a>
+    </p>
+  </div>
+</footer>
+
+<script>
+fetch('/scoreboard').then(r=>r.json()).then(d=>{
+  var s = d.summary || {};
+  document.getElementById('sb-total').textContent = s.total_pdbs || 0;
+  document.getElementById('sb-fired').textContent = s.invalidated_by_falsifier || 0;
+  document.getElementById('sb-rate').textContent = (s.fire_rate || 0) + '%';
+}).catch(function(){});
+</script>
+</body>
+</html>"""
+
+# ── Routes ───────────────────────────────────────────────────────────────
+
 @app.get("/")
-async def root():
+async def root(request: Request):
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept or "*/*" not in accept:
+        return HTMLResponse(LANDING_HTML)
+    # API client
     return {
         "service": "Personal Destiny Blueprint MCP Server",
         "version": "1.1.0",
