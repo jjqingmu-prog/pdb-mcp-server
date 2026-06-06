@@ -301,7 +301,7 @@ fetch('/scoreboard').then(r=>r.json()).then(d=>{
 @app.get("/")
 async def root(request: Request):
     accept = request.headers.get("accept", "")
-    if "text/html" in accept or "*/*" not in accept:
+    if "text/html" in accept:
         return HTMLResponse(LANDING_HTML)
     # API client
     return {
